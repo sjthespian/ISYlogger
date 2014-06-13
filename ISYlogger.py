@@ -115,6 +115,58 @@ def parse_event(*arg):
     }
     statusEvents = ['Status', 'On Level', 'Ramp Rate', 'Humidity', 'UOM', 'Thermostat Mode', 'Heat/Cool State']
 
+#    try:
+    # Log message, format based on message type
+    control = ddat['control']	# Extract message elements
+    node = ddat['node']
+    evi = ddat['eventInfo']
+    action = ddat['action']
+    # Get human-readable event control
+    ectrl = EVENT_CTRL.get(control, control)
+    if ectrl in skipEvents[verbose]:
+	return()
+
+    if node:
+	# Track status, ramp level, on level and other data for a node
+	# The first one we see is the current level, don't log unless
+	# in at least double-verbose mode
+	if ectrl in statusEvents and (node not in nodeStatus or control not in nodeStatus[node]):
+	    if node not in nodeStatus:
+		nodeStatus[node] = {}
+	    nodeStatus[node][control] = action
+	    if verbose < 2:
+		return()
+
+        log_event(build_message(node, control, action, evi))
+#	# Get name for node address
+#	nodeName = isy._node_get_name(node)
+#	nodeName = nodeName[1]
+#	if nodeName is not None:	# Node has a name
+	    # Format messages based on event type
+ #	    if ectrl in ['Status', 'Device On', 'Device Off', 'Device Fast On', 'Device Fast Off', 'On Level', 'Ramp Rate']:
+#	    elif ectrl in ['Nodes Updated']:
+#		action = updateAction[action]
+#	        log_event("\"%s\" (%s) %s : %s %s" % (nodeName, node, ectrl, action, evi))
+#	    else:	# Some other control message
+#	        log_event("\"%s\" (%s) %s : %s %s" % (nodeName, node, ectrl, action, evi))
+#	else:	# node, but no nodename
+#	    log_event("%s %s : %s %s" % (node, ectrl, action, evi))
+
+    else:	# No node for this event
+	log_event("%s = %s %s" % (ectrl, action, evi))
+
+#    except Exception:
+#        #print("Unexpected error:", sys.exc_info()[0])
+#        print("Unexpected error:", str(sys.exc_info()))
+#        print(ddat)
+#        # print data
+#    finally:
+#        pass
+
+# Build the message from the specified data
+def build_message(node='', control='', action='', evi=''):
+    global isy
+
     # Dict for Node update/change actions
     updateAction = {
 	"NN": "Node Renamed",
@@ -145,90 +197,44 @@ def parse_event(*arg):
 	"RV": "Node Revised (UPB)",
     }
 
-#    try:
-    # Log message, format based on message type
-    control = ddat['control']	# Extract message elements
-    node = ddat['node']
-    evi = ddat['eventInfo']
-    action = ddat['action']
-    # Get human-readable event control
-    ectrl = EVENT_CTRL.get(control, control)
-    if ectrl in skipEvents[verbose]:
-	return()
-
     if evi is None:		# Clear empty event info for logging
 	evi = ''
-    if node:
-	# Track status, ramp level, on level and other data for a node
-	# The first one we see is the current level, don't log unless
-	# in at least double-verbose mode
-	if ectrl in statusEvents and (node not in nodeStatus or control not in nodeStatus[node]):
-	    if node not in nodeStatus:
-		nodeStatus[node] = {}
-	    nodeStatus[node][control] = action
-	    if verbose < 2:
-		return()
 
-	# Get name for node address
+    ectrl = EVENT_CTRL.get(control, control)
+
+    # Set "is" for status updates with no changes, "changed to" for others
+    if node in nodeStatus and control in nodeStatus[node] and nodeStatus[node][control] == action:
+        actionWord = 'is'
+    else:
+        if ectrl in ['Status', 'Device On', 'Device Off', 'Device Fast On', 'Device Fast Off', 'On Level', 'Ramp Rate']:
+            actionWord = 'changed to'
+        else:
+            actionWord = ':'
+    # Calculate percentage for some events, for others return raw value
+    if ectrl in ['Status', 'On Level', 'Ramp Rate']:
+        action = str(int(float(action) / 255.0 * 100.0)) + '%'
+    elif ectrl in ['Nodes Updated']:
+        action = updateAction[action]
+
+    if node:
 	nodeName = isy._node_get_name(node)
 	nodeName = nodeName[1]
-	if nodeName is not None:	# Node has a name
-	    # Format messages based on event type
-	    if ectrl in ['Status', 'Device On', 'Device Off', 'Device Fast On', 'Device Fast Off', 'On Level', 'Ramp Rate']:
-		if int(action) == 255:
-		    action = 'on'
-		elif int(action) == 0:
-		    action = 'off'
-		else:
-		    action = str(int(float(action) / 255.0 * 100.0)) + '%'
-		if ectrl in statusEvents and ddat['action'] != nodeStatus[node][control]:
-	            log_event("\"%s\" (%s) %s changed to %s %s" % (nodeName, node, ectrl, action, evi))
-		    nodeStatus[node][control] = ddat['action']
-		elif ectrl in statusEvents and verbose > 1:
-	            log_event("\"%s\" (%s) %s is %s %s" % (nodeName, node, ectrl, action, evi))
-		else:
-	            log_event("\"%s\" (%s) %s is %s %s" % (nodeName, node, ectrl, action, evi))
-	    elif ectrl in ['Nodes Updated']:
-		action = updateAction[action]
-	        log_event("\"%s\" (%s) %s : %s %s" % (nodeName, node, ectrl, action, evi))
-	    else:	# Some other control message
-	        log_event("\"%s\" (%s) %s : %s %s" % (nodeName, node, ectrl, action, evi))
-	else:	# node, but no nodename
-	    log_event("%s %s : %s %s" % (node, ectrl, action, evi))
-
-    else:	# No node for this event
-	log_event("%s = %s %s" % (ectrl, action, evi))
-
-#    except Exception:
-#        #print("Unexpected error:", sys.exc_info()[0])
-#        print("Unexpected error:", str(sys.exc_info()))
-#        print(ddat)
-#        # print data
-#    finally:
-#        pass
-
+        if nodeName:
+            node = "\"%s\" (%s)" % (nodeName, node)
+        # No value for on/off events
+        if ectrl in ['Device On', 'Device Off', 'Device Fast On', 'Device Fast Off']:
+            return("%s %s" % (node, ectrl))
+        else:
+            return("%s %s %s %s %s" % (node, ectrl, actionWord, action, evi))
+        
+        
 # On request, dump the current node status
 def status_dump(signum, frame):
     global isy
 
     for node in nodeStatus:
-	nodeName = isy._node_get_name(node)
-	nodeName = nodeName[1]
 	for control in nodeStatus[node]:
-	    ectrl = EVENT_CTRL.get(control, control)
-	    value = nodeStatus[node][control]
-	    if int(value) == 255:
-		value = 'on'
-	    elif int(value) == 0:
-		value = 'off'
-	    else:
-		value = str(int(float(value) / 255.0 * 100.0)) + '%'
-	    if nodeName:
-		log_event("\"%s\" (%s) %s is %s" % (nodeName, node, ectrl, value))
-	    else:
-		log_event("%s %s is %s" % (nodeName, node, ectrl, value))
-
-
+            log_event(build_message(node, control, nodeStatus[node][control]))
 
 # Parse command line opts
 try:
