@@ -3,6 +3,11 @@
 # Log ISY events to syslog
 #
 
+__author__ = 'Daniel Rich <drich@employees.org>'
+__copyright__ = "Copyright (C) 2014 Daniel Rich"
+__license__ = "BSD"
+__version__ = "0.1"
+
 import os
 import sys
 import getopt
