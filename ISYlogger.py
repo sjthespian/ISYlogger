@@ -11,6 +11,7 @@ __version__ = "0.1"
 import os
 import sys
 import getopt
+import re
 import time
 import syslog
 import signal
@@ -27,6 +28,7 @@ verbose = 0				# Increments with each -v
 isyDebug = False
 debug = 0
 nodeStatus = dict()	# Tracking for node status
+programs = dict()       # Program information
 daemon = False
 logfile = ''
 syslogUse = False
@@ -87,6 +89,29 @@ def usage(message=''):
 """
     sys.exit(1)
 
+# Get info about all programs for trigger logging
+def get_proginfo(isy):
+
+    proginfo = dict()
+    for p in isy.prog_iter():
+        if p.folder:
+            pass
+        else:
+            proginfo[p.id] = {
+                'name': p.name,
+                'status': p.status,
+                'running': p.running,
+                'enabled': p.enabled,
+                'path': p.path,
+                'runAtStartup': p.runAtStartup,
+                }
+            if 'lastFinishTime' in p and p.lastFinishTime:
+                proginfo[p.id]['lastFinishTime'] = p.lastFinishTime
+            if 'lastRunTime' in p and p.lastRunTime:
+                proginfo[p.id]['lastRunTime'] = p.lastRunTime,
+
+    return(proginfo)
+
 # Log an event to syslog or stdout
 def log_event(message=''):
     global logfile, syslogUse, syslogSeverities, syslogSeverity
@@ -104,73 +129,10 @@ def log_event(message=''):
     if not syslogUse and not logfile:	# log to stdout
 	print "%s %s" % (ts, message)
 
-# Parse an event and send it off to the logger
-def parse_event(*arg):
-    global isy, verbose
-
-    ddat = arg[0]
-    # mydat = arg[1]
-    exml = arg[2]
-
-    # Message types to skip logging
-    skipEvents = {
-	0: ['Trigger', 'Heartbeat', 'System Status', 'System Config Updated', 'Electricity'],
-	1: ['Heartbeat', 'System Status', 'System Config Updated'],
-	2: []
-    }
-    statusEvents = ['Status', 'On Level', 'Ramp Rate', 'Humidity', 'UOM', 'Thermostat Mode', 'Heat/Cool State']
-
-#    try:
-    # Log message, format based on message type
-    control = ddat['control']	# Extract message elements
-    node = ddat['node']
-    evi = ddat['eventInfo']
-    action = ddat['action']
-    # Get human-readable event control
-    ectrl = EVENT_CTRL.get(control, control)
-    if ectrl in skipEvents[verbose]:
-	return()
-
-    if node:
-	# Track status, ramp level, on level and other data for a node
-	# The first one we see is the current level, don't log unless
-	# in at least double-verbose mode
-	if ectrl in statusEvents and (node not in nodeStatus or control not in nodeStatus[node]):
-	    if node not in nodeStatus:
-		nodeStatus[node] = {}
-	    nodeStatus[node][control] = action
-	    if verbose < 2:
-		return()
-
-        log_event(build_message(node, control, action, evi))
-#	# Get name for node address
-#	nodeName = isy._node_get_name(node)
-#	nodeName = nodeName[1]
-#	if nodeName is not None:	# Node has a name
-	    # Format messages based on event type
- #	    if ectrl in ['Status', 'Device On', 'Device Off', 'Device Fast On', 'Device Fast Off', 'On Level', 'Ramp Rate']:
-#	    elif ectrl in ['Nodes Updated']:
-#		action = updateAction[action]
-#	        log_event("\"%s\" (%s) %s : %s %s" % (nodeName, node, ectrl, action, evi))
-#	    else:	# Some other control message
-#	        log_event("\"%s\" (%s) %s : %s %s" % (nodeName, node, ectrl, action, evi))
-#	else:	# node, but no nodename
-#	    log_event("%s %s : %s %s" % (node, ectrl, action, evi))
-
-    else:	# No node for this event
-	log_event("%s = %s %s" % (ectrl, action, evi))
-
-#    except Exception:
-#        #print("Unexpected error:", sys.exc_info()[0])
-#        print("Unexpected error:", str(sys.exc_info()))
-#        print(ddat)
-#        # print data
-#    finally:
-#        pass
 
 # Build the message from the specified data
 def build_message(node='', control='', action='', evi=''):
-    global isy
+    global isy, programs
 
     # Dict for Node update/change actions
     updateAction = {
@@ -231,7 +193,121 @@ def build_message(node='', control='', action='', evi=''):
             return("%s %s" % (node, ectrl))
         else:
             return("%s %s %s %s %s" % (node, ectrl, actionWord, action, evi))
+    else:
+        if ectrl == 'Trigger':
+            triggerActions = {
+                '0': "Event Sttus",
+                '1': "Client Should Get Status",
+                '2': "Key Changed",
+                '3': "Info String",
+                '4': "IR Learn Mode",
+                '5': "Schedule (schedule status changed)",
+                '6': "Variable Status (status of variable changed)",
+                '7': "Variable Initialized (initial value of a variable",
+                '8': 'Unknown action 8!',
+                }
+
+            if action == '0' and 'nr' in evi:
+                prog_id = '{0:0>4}'.format(evi['id'])
+                program = isy.get_prog(prog_id)
+                actionMsg = "- %s " % (program['name'])
+#                print "%s -> %s" % (prog_id, str(programs[prog_id]))
+                if 'on' in evi and programs[prog_id]['enabled'] != True:
+                    actionMsg += 'enabled, '
+                    programs[prog_id]['status'] = True
+                if 'off' in evi and programs[prog_id]['enabled'] != False:
+                    actionMsg += 'disabled, '
+                    programs[prog_id]['status'] = False
+                if 'rr' in evi:
+                    actionMsg += 'run at startup, '
+                if 's' in evi:
+                    actionMsg += 'status: '
+                    status = int(evi['s'],16)
+                    if (status & 0x01) and programs[prog_id]['running'] != 'idle':
+                        actionMsg += 'idle, '
+                        programs[prog_id]['running'] = 'idle'
+                    elif (status & 0x02) and programs[prog_id]['running'] != 'then':
+                        actionMsg += 'running then, '
+                        programs[prog_id]['running'] = 'then'
+                    elif (status & 0x03) and programs[prog_id]['running'] != 'else':
+                        actionMsg += 'running else, '
+                        programs[prog_id]['running'] = 'else'
+                    if (status & 0x10) and programs[prog_id]['status'] != 'unknown':
+                        actionMsg += 'status unknown, '
+                        programs[prog_id]['status'] = 'unknown'
+                    elif (status & 0x20) and programs[prog_id]['status'] != True:
+                        actionMsg += 'status became true, '
+                        programs[prog_id]['status'] = 'true'
+                    elif (status & 0x30) and programs[prog_id]['status'] != False:
+                        actionMsg += 'status became false, '
+                        programs[prog_id]['status'] = 'false'
+                    elif (status & 0xF0) and programs[prog_id]['status'] != 'not loaded':
+                        actionMsg += 'not loaded, '
+                        programs[prog_id]['status'] = 'not loaded'
+                actionMsg += "Last Run: %s, Last Finish %s, " % (re.sub('(\d{2])(\d{2})(\d{2})',r'20\1-\2-\3',evi['r']), re.sub('(\d{2])(\d{2})(\d{2})',r'20\1-\2-\3',evi['f']))
+                if debug:       # Include event info if debugging
+                    return("%s : %s %s %s" % (ectrl, triggerActions[action], actionMsg, evi))
+                else:
+                    return("%s : %s %s" % (ectrl, triggerActions[action], actionMsg))
+            elif action == '6' or action == '7':
+                var_evi = evi['var']
+                vid = var_evi['var-type'] + ':' + var_evi['var-id']
+                return("%s : %s %s (vid:%s)" % (ectrl, triggerActions[action], evi, vid))
+            else:
+                return("%s : %s %s" % (ectrl, triggerActions[action], evi))
+        else:
+            return("%s : %s %s" % (ectrl, action, evi))
+            
         
+# Parse an event and send it off to the logger
+def parse_event(*arg):
+    global isy, verbose
+
+    ddat = arg[0]
+    # mydat = arg[1]
+    exml = arg[2]
+
+    # Message types to skip logging
+    skipEvents = {
+	0: ['Trigger', 'Heartbeat', 'System Status', 'System Config Updated', 'Electricity'],
+	1: ['Heartbeat', 'System Status', 'System Config Updated'],
+	2: []
+    }
+    statusEvents = ['Status', 'On Level', 'Ramp Rate', 'Humidity', 'UOM', 'Thermostat Mode', 'Heat/Cool State']
+
+    try:
+        # Log message, format based on message type
+        control = ddat['control']	# Extract message elements
+        node = ddat['node']
+        evi = ddat['eventInfo']
+        action = ddat['action']
+        # Get human-readable event control
+        ectrl = EVENT_CTRL.get(control, control)
+        if ectrl in skipEvents[verbose]:
+            return()
+
+        if node:
+            # Track status, ramp level, on level and other data for a node
+            # The first one we see is the current level, don't log unless
+            # in at least double-verbose mode
+            if ectrl in statusEvents and (node not in nodeStatus or control not in nodeStatus[node]):
+                if node not in nodeStatus:
+                    nodeStatus[node] = {}
+                nodeStatus[node][control] = action
+                if verbose < 2:
+                    return()
+
+            log_event(build_message(node, control, action, evi))
+        else:	# No node for this event
+            log_event(build_message(node, control, action, evi))
+
+    except Exception:
+        #print("Unexpected error:", sys.exc_info()[0])
+        print("Unexpected error:", str(sys.exc_info()))
+        print(ddat)
+        # print data
+    finally:
+        pass
         
 # On request, dump the current node status
 def status_dump(signum, frame):
@@ -291,6 +367,12 @@ if not isyUser:
 if not isyPass:
     usage('You must specify the ISY password')
 
+# Print debug level
+if debug:
+    print "DEBUG: debug level set to %d" % debug
+    if isyDebug:
+        print "DEBUG: ISY library debug enabled"
+
 # Validate syslog config 
 if syslogUse:
     if syslogFacility not in syslogFacilities:
@@ -308,7 +390,7 @@ if logfile:
 
 # Main loop for daemonizing
 def main():
-    global isy, syslogUse, syslogFacility, logfile
+    global isy, programs, syslogUse, syslogFacility, logfile
 
     # Setup syslog if requested
     if syslogUse:
@@ -324,7 +406,15 @@ def main():
     # Dump status on sigusr1
     signal.signal(signal.SIGUSR1,status_dump)
 
-    isy = Isy(addr=isyHost, userl=isyUser, userp=isyPass, debug=isyDebug)
+    # Connect to ISY
+    try:
+        isy = Isy(addr=isyHost, userl=isyUser, userp=isyPass, debug=isyDebug)
+    except:
+        print "ERROR: Connection to ISY failed!"
+        sys.exit(1)
+
+    programs = get_proginfo(isy) # Get info about programs for trigger logging
+
     server = ISYEvent()
     server.subscribe(addr=isyHost, userl=isyUser, userp=isyPass, debug=isyDebug)
     server.set_process_func(parse_event, "")
