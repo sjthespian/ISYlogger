@@ -196,7 +196,7 @@ def build_message(node='', control='', action='', evi=''):
     else:
         if ectrl == 'Trigger':
             triggerActions = {
-                '0': "Event Sttus",
+                '0': "Event Status",
                 '1': "Client Should Get Status",
                 '2': "Key Changed",
                 '3': "Info String",
