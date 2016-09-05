@@ -1,0 +1,13 @@
+description "ISYlogger - logging tool for ISY994i"
+
+start on filesystem and static-network-up
+stop on runlevel [016]
+
+expect fork
+respawn
+
+pre-start script
+	[ -x /usr/local/bin/ISYlogger ] || { stop; exit 0; }
+end script
+
+exec /usr/local/bin/ISYlogger --daemon --syslog daemon.info
