@@ -133,6 +133,8 @@ def log_event(message=''):
 def build_message(node=None, control='', action='', evi=''):
     global isy, programs
 
+    if debug:
+        print "build_message(node=%s, control=%s, action=%s, evi=%s)" % (node,control,action,evi)
     # Dict for Node update/change actions
     updateAction = {
 	"NI": "Node Initialized",
@@ -263,6 +265,15 @@ def build_message(node=None, control='', action='', evi=''):
                 actionMsg += "Last Run: %s, Last Finish %s, " % (re.sub('(\d{2])(\d{2})(\d{2})',r'20\1-\2-\3',evi['r']), re.sub('(\d{2])(\d{2})(\d{2})',r'20\1-\2-\3',evi['f']))
                 if debug:       # Include event info if debugging
                     return("%s : %s %s %s" % (ectrl, triggerActions[action], actionMsg, evi))
+                else:
+                    return("%s : %s %s" % (ectrl, triggerActions[action], actionMsg))
+            elif action == '3':
+                return(str(evi))
+            else:
+                if action in triggerActions:
+                    return("Trigger: %s - %s" % (triggerActions[action], str(evi)))
+                else:
+                    return("Trigger: unknown action %s - %s" % (action, str(evi)))
 
 
         elif ectrl == 'Elk':
@@ -278,7 +289,7 @@ def build_message(node=None, control='', action='', evi=''):
                     int(evi['ze']['ze-val'])))
             elif action == '4': # Keypad
                 if 'ke-area' in evi['ke']:
-                    return("ELK: Keypad %d  Area: %d  Type: %d  Value: %d" % (
+                    return("ELK: Keypad %d  Area: %d  Type: %d  Value: %d"  (
                         int(evi['ke']['ke-keypad']),
                         int(evi['ke']['ke-area']),
                         int(evi['ke']['ke-type']),
@@ -313,7 +324,7 @@ def parse_event(*arg):
 
     # Message types to skip logging
     skipEvents = {
-	0: ['Trigger', 'Heartbeat', 'System Status', 'System Config Updated', 'Electricity'],
+	0: ['Heartbeat', 'System Status', 'System Config Updated', 'Electricity'],
 	1: ['Heartbeat', 'System Status', 'System Config Updated'],
 	2: []
     }
@@ -326,8 +337,16 @@ def parse_event(*arg):
         node = ddat['node']
         evi = ddat['eventInfo']
         action = ddat['action']
+        if debug:
+            print "\n%s" % ddat
+            print "control: %s" % control
+            print "node: %s" % node
+            print "evi: %s" % evi
+            print "action: %s" % action
         # Get human-readable event control
         ectrl = EVENT_CTRL.get(control, control)
+        if debug:
+            print "ectrl: %s" % ectrl
         if ectrl in skipEvents[verbose]:
 	    return()
     
